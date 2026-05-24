@@ -101,15 +101,30 @@ def sync_table(src_conn, dest_conn, table):
         rows = cur.fetchall()
 
     with dest_conn.cursor() as cur:
-        # Truncate then reinsert — handles adds, edits, and removals atomically
-        cur.execute(f'TRUNCATE TABLE "{table}"')
         if rows:
             cols_quoted = ', '.join(f'"{c}"' for c in col_names)
-            execute_values(
-                cur,
-                f'INSERT INTO "{table}" ({cols_quoted}) VALUES %s',
-                rows
-            )
+            if pks:
+                # Upsert: preserve historical data across DB switches.
+                # Rows removed from source stay in Supabase (intentional — old tournament history kept).
+                update_cols = [c for c in col_names if c not in pks]
+                if update_cols:
+                    set_clause = ', '.join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
+                    conflict_clause = f'ON CONFLICT ({", ".join(f"{pk}" for pk in pks)}) DO UPDATE SET {set_clause}'
+                else:
+                    conflict_clause = f'ON CONFLICT ({", ".join(f"{pk}" for pk in pks)}) DO NOTHING'
+                execute_values(
+                    cur,
+                    f'INSERT INTO "{table}" ({cols_quoted}) VALUES %s {conflict_clause}',
+                    rows
+                )
+            else:
+                # No PK: truncate + reinsert (can't upsert without a key)
+                cur.execute(f'TRUNCATE TABLE "{table}"')
+                execute_values(
+                    cur,
+                    f'INSERT INTO "{table}" ({cols_quoted}) VALUES %s',
+                    rows
+                )
     dest_conn.commit()
     log.info(f'  {table}: {len(rows)} rows')
 
