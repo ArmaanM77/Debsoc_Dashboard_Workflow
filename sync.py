@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import psycopg2
 from psycopg2.extras import execute_values
 
@@ -8,6 +10,8 @@ log = logging.getLogger(__name__)
 
 SOURCE_URL = os.environ['SOURCE_DB_URL']
 DEST_URL = os.environ['DEST_DB_URL']
+CONNECT_RETRIES = 4
+CONNECT_RETRY_DELAY_SECONDS = 8
 
 # Django internal tables we don't need to sync
 SKIP_TABLES = {
@@ -20,6 +24,26 @@ SKIP_TABLES = {
     'auth_user_groups',
     'auth_user_user_permissions',
 }
+
+
+def with_default_sslmode(db_url):
+    parts = urlsplit(db_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.setdefault('sslmode', 'require')
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def connect_with_retry(label, db_url):
+    url = with_default_sslmode(db_url)
+    for attempt in range(1, CONNECT_RETRIES + 1):
+        try:
+            log.info(f'Connecting to {label} database (attempt {attempt}/{CONNECT_RETRIES})...')
+            return psycopg2.connect(url, connect_timeout=15)
+        except psycopg2.OperationalError:
+            if attempt == CONNECT_RETRIES:
+                raise
+            log.warning(f'{label} connection failed; retrying in {CONNECT_RETRY_DELAY_SECONDS}s...')
+            time.sleep(CONNECT_RETRY_DELAY_SECONDS)
 
 
 def get_tables(conn):
@@ -131,8 +155,8 @@ def sync_table(src_conn, dest_conn, table):
 
 def main():
     log.info('Connecting...')
-    src = psycopg2.connect(SOURCE_URL)
-    dest = psycopg2.connect(DEST_URL)
+    src = connect_with_retry('source', SOURCE_URL)
+    dest = connect_with_retry('destination', DEST_URL)
 
     tables = [t for t in get_tables(src) if t not in SKIP_TABLES]
     log.info(f'Tables to sync: {len(tables)}')
