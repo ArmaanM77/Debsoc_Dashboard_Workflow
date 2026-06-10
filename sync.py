@@ -185,6 +185,18 @@ def get_source_offset(src_conn, dest_conn):
 
 def col_type_sql(col):
     _, data_type, char_max, _, _, udt_name = col
+    if data_type == 'ARRAY':
+        array_type_map = {
+            '_int2': 'SMALLINT[]',
+            '_int4': 'INTEGER[]',
+            '_int8': 'BIGINT[]',
+            '_float4': 'REAL[]',
+            '_float8': 'DOUBLE PRECISION[]',
+            '_bool': 'BOOLEAN[]',
+            '_text': 'TEXT[]',
+            '_varchar': 'TEXT[]',
+        }
+        return array_type_map.get(udt_name, 'TEXT[]')
     if data_type == 'USER-DEFINED':
         return udt_name
     if data_type == 'character varying':
