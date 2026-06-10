@@ -1,6 +1,8 @@
 import os
 import logging
 import time
+import hashlib
+import json
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import psycopg2
 from psycopg2.extras import execute_values
@@ -12,6 +14,9 @@ SOURCE_URL = os.environ['SOURCE_DB_URL']
 DEST_URL = os.environ['DEST_DB_URL']
 CONNECT_RETRIES = 4
 CONNECT_RETRY_DELAY_SECONDS = 8
+SOURCE_ID_BLOCK = 1_000_000
+
+ID_COLUMN_NAMES = {'id', 'person_ptr_id', 'object_id'}
 
 # Django internal tables we don't need to sync
 SKIP_TABLES = {
@@ -84,6 +89,100 @@ def get_primary_keys(conn, table):
         return [row[0] for row in cur.fetchall()]
 
 
+def is_integer_type(col):
+    _, data_type, _, _, _, udt_name = col
+    return data_type in {'integer', 'bigint', 'smallint'} or udt_name in {'int2', 'int4', 'int8'}
+
+
+def is_id_like_column(name):
+    return name in ID_COLUMN_NAMES or name.endswith('_id')
+
+
+def get_source_fingerprint(src_conn):
+    with src_conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, name, slug
+            FROM tournaments_tournament
+            ORDER BY id
+        """)
+        tournaments = cur.fetchall()
+
+    payload = json.dumps(tournaments, default=str, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def ensure_sync_sources_table(dest_conn):
+    with dest_conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_sync_sources (
+                fingerprint TEXT PRIMARY KEY,
+                id_offset INTEGER NOT NULL,
+                first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+    dest_conn.commit()
+
+
+def has_existing_dashboard_data(dest_conn):
+    with dest_conn.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'tournaments_tournament'
+            )
+        """)
+        if not cur.fetchone()[0]:
+            return False
+
+        cur.execute('SELECT EXISTS (SELECT 1 FROM tournaments_tournament LIMIT 1)')
+        return bool(cur.fetchone()[0])
+
+
+def get_source_offset(src_conn, dest_conn):
+    fingerprint = get_source_fingerprint(src_conn)
+    has_legacy_data = has_existing_dashboard_data(dest_conn)
+    ensure_sync_sources_table(dest_conn)
+
+    with dest_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id_offset
+            FROM dashboard_sync_sources
+            WHERE fingerprint = %s
+            """,
+            (fingerprint,)
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.execute(
+                """
+                UPDATE dashboard_sync_sources
+                SET last_seen_at = NOW()
+                WHERE fingerprint = %s
+                """,
+                (fingerprint,)
+            )
+            dest_conn.commit()
+            return int(existing[0])
+
+        cur.execute('SELECT COALESCE(MAX(id_offset), -1000000) FROM dashboard_sync_sources')
+        max_offset = int(cur.fetchone()[0])
+        offset = SOURCE_ID_BLOCK if max_offset < 0 and has_legacy_data else max(0, max_offset + SOURCE_ID_BLOCK)
+        cur.execute(
+            """
+            INSERT INTO dashboard_sync_sources (fingerprint, id_offset)
+            VALUES (%s, %s)
+            """,
+            (fingerprint, offset)
+        )
+    dest_conn.commit()
+    log.info(f'Registered new source fingerprint with ID offset {offset}')
+    return offset
+
+
 def col_type_sql(col):
     _, data_type, char_max, _, _, udt_name = col
     if data_type == 'USER-DEFINED':
@@ -113,7 +212,29 @@ def ensure_table(dest_conn, table, columns, pks):
     dest_conn.commit()
 
 
-def sync_table(src_conn, dest_conn, table):
+def transform_rows(rows, columns, source_offset):
+    if source_offset == 0 or not rows:
+        return rows
+
+    id_indexes = [
+        idx for idx, col in enumerate(columns)
+        if is_id_like_column(col[0]) and is_integer_type(col)
+    ]
+    if not id_indexes:
+        return rows
+
+    transformed = []
+    for row in rows:
+        row_list = list(row)
+        for idx in id_indexes:
+            value = row_list[idx]
+            if value is not None:
+                row_list[idx] = int(value) + source_offset
+        transformed.append(tuple(row_list))
+    return transformed
+
+
+def sync_table(src_conn, dest_conn, table, source_offset):
     columns = get_columns(src_conn, table)
     pks = get_primary_keys(src_conn, table)
     col_names = [col[0] for col in columns]
@@ -123,6 +244,8 @@ def sync_table(src_conn, dest_conn, table):
     with src_conn.cursor() as cur:
         cur.execute(f'SELECT * FROM "{table}"')
         rows = cur.fetchall()
+
+    rows = transform_rows(rows, columns, source_offset)
 
     with dest_conn.cursor() as cur:
         if rows:
@@ -157,6 +280,8 @@ def main():
     log.info('Connecting...')
     src = connect_with_retry('source', SOURCE_URL)
     dest = connect_with_retry('destination', DEST_URL)
+    source_offset = get_source_offset(src, dest)
+    log.info(f'Using source ID offset: {source_offset}')
 
     tables = [t for t in get_tables(src) if t not in SKIP_TABLES]
     log.info(f'Tables to sync: {len(tables)}')
@@ -165,7 +290,7 @@ def main():
     for table in tables:
         try:
             log.info(f'Syncing {table}...')
-            sync_table(src, dest, table)
+            sync_table(src, dest, table, source_offset)
         except Exception as e:
             log.error(f'FAILED {table}: {e}')
             dest.rollback()
