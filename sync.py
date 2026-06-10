@@ -101,11 +101,17 @@ def is_id_like_column(name):
 def get_source_fingerprint(src_conn):
     with src_conn.cursor() as cur:
         cur.execute("""
-            SELECT id, name, slug
+            SELECT name, slug
             FROM tournaments_tournament
-            ORDER BY id
+            ORDER BY LOWER(COALESCE(slug, '')), LOWER(COALESCE(name, ''))
         """)
-        tournaments = cur.fetchall()
+        tournaments = [
+            {
+                'name': (name or '').strip().lower(),
+                'slug': (slug or '').strip().lower(),
+            }
+            for name, slug in cur.fetchall()
+        ]
 
     payload = json.dumps(tournaments, default=str, separators=(',', ':'))
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
