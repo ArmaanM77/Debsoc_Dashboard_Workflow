@@ -11,6 +11,7 @@ on:
         options:
           - check
           - adopt
+          - prepare
           - rotate
         default: check
 
@@ -27,6 +28,8 @@ env:
   RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID }}
   RENDER_REGION: ${{ vars.RENDER_REGION }}
   RENDER_POSTGRES_VERSION: ${{ vars.RENDER_POSTGRES_VERSION }}
+  RENDER_BLUEPRINT_ID: ${{ vars.RENDER_BLUEPRINT_ID }}
+  RENDER_LEGACY_DATABASE_ID: ${{ vars.RENDER_LEGACY_DATABASE_ID }}
 
 jobs:
   preflight:
@@ -103,6 +106,27 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: python render_rotation.py adopt
+
+  prepare-backup:
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prepare'
+    uses: ./.github/workflows/backup-supabase.yml
+    secrets: inherit
+
+  prepare-recovery:
+    needs: [preflight, prepare-backup]
+    if: needs.prepare-backup.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Disconnect stale Blueprint and remove expired database
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          ROTATION_SAFETY_TOKEN: SYNC_AND_BACKUP_SUCCEEDED
+        run: python render_rotation.py prepare-recovery
 
   final-sync:
     needs: preflight

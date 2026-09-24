@@ -39,6 +39,31 @@ class FakeRenderClient:
         self.rotation_state = value if key == render_rotation.ROTATION_STATE_KEY else self.rotation_state
 
 
+class RecoveryRenderClient(FakeRenderClient):
+    def __init__(self):
+        super().__init__(database=None, rotation_state="recovery:missing")
+        self.disconnected = None
+        self.deleted = None
+
+    def retrieve_blueprint(self, blueprint_id):
+        return {"id": blueprint_id, "ownerId": "tea-123"}
+
+    def disconnect_blueprint(self, blueprint_id):
+        self.disconnected = blueprint_id
+
+    def retrieve_postgres(self, postgres_id):
+        return {
+            "id": postgres_id,
+            "name": render_rotation.DATABASE_NAME,
+            "ownerId": "tea-123",
+            "plan": "free",
+            "status": "suspended",
+        }
+
+    def delete_postgres(self, postgres_id):
+        self.deleted = postgres_id
+
+
 class RenderAPIHelpersTests(unittest.TestCase):
     def test_exact_resource_rejects_duplicate_names(self):
         resources = [
@@ -138,6 +163,19 @@ class RotationStateTests(unittest.TestCase):
             os.environ.pop("ROTATION_SAFETY_TOKEN", None)
             with self.assertRaises(RenderAPIError):
                 render_rotation.rotate(client, force=False)
+
+    def test_prepare_recovery_disconnects_before_deleting_exact_legacy_database(self):
+        client = RecoveryRenderClient()
+        env = {
+            "ROTATION_SAFETY_TOKEN": render_rotation.SAFETY_TOKEN,
+            "RENDER_BLUEPRINT_ID": "exs-123",
+            "RENDER_LEGACY_DATABASE_ID": "dpg-old",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            render_rotation.prepare_missing_database_recovery(client)
+        self.assertEqual(client.disconnected, "exs-123")
+        self.assertEqual(client.deleted, "dpg-old")
+        self.assertEqual(client.rotation_state, "recovery:detached")
 
 
 if __name__ == "__main__":

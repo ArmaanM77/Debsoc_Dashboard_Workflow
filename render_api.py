@@ -169,6 +169,19 @@ class RenderClient:
             "postgres",
         )
 
+    def retrieve_blueprint(self, blueprint_id):
+        return unwrap(
+            self.request("GET", f"/blueprints/{quote(blueprint_id)}"),
+            "blueprint",
+        )
+
+    def disconnect_blueprint(self, blueprint_id):
+        self.request(
+            "DELETE",
+            f"/blueprints/{quote(blueprint_id)}",
+            expected=(204,),
+        )
+
     def create_postgres(self, payload):
         return unwrap(
             self.request("POST", "/postgres", payload=payload, expected=(201,)),

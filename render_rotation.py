@@ -202,6 +202,77 @@ def adopt(client):
     }))
 
 
+def prepare_missing_database_recovery(client):
+    if os.environ.get("ROTATION_SAFETY_TOKEN") != SAFETY_TOKEN:
+        raise RenderAPIError(
+            "Safety stop: an encrypted backup guard is required before recovery preparation."
+        )
+
+    blueprint_id = os.environ.get("RENDER_BLUEPRINT_ID")
+    legacy_database_id = os.environ.get("RENDER_LEGACY_DATABASE_ID")
+    if not blueprint_id or not legacy_database_id:
+        raise RenderAPIError(
+            "RENDER_BLUEPRINT_ID and RENDER_LEGACY_DATABASE_ID are required."
+        )
+
+    service, database, owner_id = discover(client, database_required=False)
+    service_id = resource_id(service, "service")
+    if database is not None:
+        raise RenderAPIError(
+            "Safety stop: the configured database is visible; use normal rotation instead."
+        )
+
+    rotation_state = get_rotation_state(client, service_id)
+    detached_states = {"recovery:detaching", "recovery:detached"}
+    blueprint = None
+    try:
+        blueprint = client.retrieve_blueprint(blueprint_id)
+    except RenderAPIError as exc:
+        if "HTTP 404" not in str(exc) or rotation_state not in detached_states:
+            raise
+
+    if blueprint is not None:
+        blueprint_owner = field(blueprint, "ownerId", "owner_id")
+        if isinstance(blueprint_owner, dict):
+            blueprint_owner = field(blueprint_owner, "id")
+        if blueprint_owner and blueprint_owner != owner_id:
+            raise RenderAPIError("Safety stop: Blueprint owner does not match the service owner.")
+        client.update_env_var(service_id, ROTATION_STATE_KEY, "recovery:detaching")
+        client.disconnect_blueprint(blueprint_id)
+
+    legacy_database = None
+    try:
+        legacy_database = client.retrieve_postgres(legacy_database_id)
+    except RenderAPIError as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+
+    if legacy_database is not None:
+        if field(legacy_database, "name") != DATABASE_NAME:
+            raise RenderAPIError("Safety stop: legacy database name does not match exactly.")
+        legacy_owner = field(legacy_database, "ownerId", "owner_id")
+        if legacy_owner != owner_id:
+            raise RenderAPIError("Safety stop: legacy database owner does not match.")
+        if postgres_plan(legacy_database) != "free":
+            raise RenderAPIError("Safety stop: legacy database is not on the free plan.")
+        if postgres_status(legacy_database) not in {
+            "expired", "failed", "suspended", "unavailable", "deleted"
+        }:
+            raise RenderAPIError("Safety stop: legacy database is not expired or suspended.")
+        client.delete_postgres(legacy_database_id)
+
+    client.update_service(service_id, {"autoDeploy": "no"})
+    client.update_env_var(service_id, ROTATION_STATE_KEY, "recovery:detached")
+    print(json.dumps({
+        "prepared": True,
+        "blueprint_id": blueprint_id,
+        "legacy_database_id": legacy_database_id,
+        "legacy_database_deleted": legacy_database is not None,
+        "service_id": service_id,
+        "auto_deploy": "off",
+    }))
+
+
 def create_payload(previous, owner_id):
     database_name = field(previous or {}, "databaseName", "database_name", default="tabbycat")
     database_user = field(previous or {}, "databaseUser", "database_user", default="tabbycat")
@@ -340,6 +411,7 @@ def build_parser():
     check = subparsers.add_parser("check")
     check.add_argument("--github-output")
     subparsers.add_parser("adopt")
+    subparsers.add_parser("prepare-recovery")
     rotation = subparsers.add_parser("rotate")
     rotation.add_argument("--force", action="store_true")
     rotation.add_argument("--allow-destructive-rotation", action="store_true")
@@ -355,6 +427,8 @@ def main():
         print(json.dumps(state))
     elif args.command == "adopt":
         adopt(client)
+    elif args.command == "prepare-recovery":
+        prepare_missing_database_recovery(client)
     elif args.command == "rotate":
         if not args.allow_destructive_rotation:
             raise RenderAPIError("Safety stop: destructive rotation flag is required.")
