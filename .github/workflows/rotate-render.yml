@@ -53,9 +53,18 @@ jobs:
         id: decision
         env:
           DUE: ${{ steps.check.outputs.due }}
+          EVENT_NAME: ${{ github.event_name }}
           MODE: ${{ inputs.mode }}
         run: |
-          if [[ "$DUE" == "true" || "$MODE" == "rotate" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Manual check and adopt runs must never fall through into rotation,
+            # even when the existing database is already due or suspended.
+            [[ "$MODE" == "rotate" ]] && rotate=true || rotate=false
+          else
+            [[ "$DUE" == "true" ]] && rotate=true || rotate=false
+          fi
+
+          if [[ "$rotate" == "true" ]]; then
             echo "should_rotate=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_rotate=false" >> "$GITHUB_OUTPUT"
