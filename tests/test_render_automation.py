@@ -32,6 +32,12 @@ class FakeRenderClient:
             raise RenderAPIError("Render API GET env returned HTTP 404.")
         return {"envVar": {"key": key, "value": self.rotation_state}}
 
+    def update_service(self, service_id, payload):
+        self.updated_service = (service_id, payload)
+
+    def update_env_var(self, service_id, key, value):
+        self.rotation_state = value if key == render_rotation.ROTATION_STATE_KEY else self.rotation_state
+
 
 class RenderAPIHelpersTests(unittest.TestCase):
     def test_exact_resource_rejects_duplicate_names(self):
@@ -105,6 +111,12 @@ class RotationStateTests(unittest.TestCase):
         state = render_rotation.current_state(client)
         self.assertTrue(state["due"])
         self.assertTrue(state["recovery"])
+
+    def test_missing_database_can_be_adopted_without_deletion(self):
+        client = FakeRenderClient(database=None, rotation_state=None)
+        render_rotation.adopt(client)
+        self.assertEqual(client.rotation_state, "recovery:missing")
+        self.assertEqual(client.updated_service, ("srv-123", {"autoDeploy": "no"}))
 
     def test_expired_database_skips_final_source_sync(self):
         client = FakeRenderClient(

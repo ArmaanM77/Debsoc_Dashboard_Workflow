@@ -178,16 +178,26 @@ def write_github_output(path, state):
 
 
 def adopt(client):
-    service, database, _ = discover(client, database_required=True)
+    service, database, _ = discover(client, database_required=False)
     service_id = resource_id(service, "service")
-    database_id = resource_id(database, "database")
     client.update_service(service_id, {"autoDeploy": "no"})
-    client.update_env_var(service_id, ROTATION_STATE_KEY, f"ready:{database_id}")
-    client.update_env_var(service_id, "DEBSOC_RENDER_DATABASE_ID", database_id)
+    if database:
+        database_id = resource_id(database, "database")
+        rotation_state = f"ready:{database_id}"
+        client.update_env_var(service_id, "DEBSOC_RENDER_DATABASE_ID", database_id)
+    else:
+        # A free database can already have expired and disappeared before the
+        # controller is installed. Adopting the surviving service in recovery
+        # mode lets the guarded rotation create a replacement without deleting
+        # anything.
+        database_id = None
+        rotation_state = "recovery:missing"
+    client.update_env_var(service_id, ROTATION_STATE_KEY, rotation_state)
     print(json.dumps({
         "adopted": True,
         "service_id": service_id,
         "database_id": database_id,
+        "database_exists": database is not None,
         "auto_deploy": "off",
     }))
 
