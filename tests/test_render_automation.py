@@ -55,7 +55,7 @@ class RecoveryRenderClient(FakeRenderClient):
         return {
             "id": postgres_id,
             "name": render_rotation.DATABASE_NAME,
-            "ownerId": "tea-123",
+            "owner": {"id": "tea-123"},
             "plan": "free",
             "status": "suspended",
         }

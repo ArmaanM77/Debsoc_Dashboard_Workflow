@@ -250,7 +250,9 @@ def prepare_missing_database_recovery(client):
     if legacy_database is not None:
         if field(legacy_database, "name") != DATABASE_NAME:
             raise RenderAPIError("Safety stop: legacy database name does not match exactly.")
-        legacy_owner = field(legacy_database, "ownerId", "owner_id")
+        legacy_owner = field(legacy_database, "ownerId", "owner_id", "owner")
+        if isinstance(legacy_owner, dict):
+            legacy_owner = field(legacy_owner, "id", "ownerId", "owner_id")
         if legacy_owner != owner_id:
             raise RenderAPIError("Safety stop: legacy database owner does not match.")
         if postgres_plan(legacy_database) != "free":
