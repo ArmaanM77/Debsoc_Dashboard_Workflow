@@ -22,11 +22,6 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client-17
-
       - name: Create and validate database dump
         env:
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
@@ -34,8 +29,11 @@ jobs:
           set -euo pipefail
           stamp="$(date -u +'%Y%m%dT%H%M%SZ')"
           dump="supabase-${stamp}.dump"
-          pg_dump --format=custom --no-owner --no-privileges --file="$dump" "$DEST_DB_URL"
-          pg_restore --list "$dump" > "${dump}.manifest.txt"
+          docker run --rm -v "$PWD:/backup" postgres:17 \
+            pg_dump --format=custom --no-owner --no-privileges \
+            --file="/backup/$dump" "$DEST_DB_URL"
+          docker run --rm -v "$PWD:/backup" postgres:17 \
+            pg_restore --list "/backup/$dump" > "${dump}.manifest.txt"
           test -s "$dump"
           test -s "${dump}.manifest.txt"
           echo "DUMP_FILE=$dump" >> "$GITHUB_ENV"
