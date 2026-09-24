@@ -1,0 +1,64 @@
+name: Backup Supabase
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/backup-supabase.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Create and validate database dump
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+          dump="supabase-${stamp}.dump"
+          pg_dump --format=custom --no-owner --no-privileges --file="$dump" "$DEST_DB_URL"
+          pg_restore --list "$dump" > "${dump}.manifest.txt"
+          test -s "$dump"
+          test -s "${dump}.manifest.txt"
+          echo "DUMP_FILE=$dump" >> "$GITHUB_ENV"
+
+      - name: Encrypt database dump
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.SUPABASE_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          test -n "$BACKUP_PASSPHRASE"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 \
+            -in "$DUMP_FILE" -out "${DUMP_FILE}.enc" \
+            -pass env:BACKUP_PASSPHRASE
+          sha256sum "${DUMP_FILE}.enc" > "${DUMP_FILE}.enc.sha256"
+          rm -f "$DUMP_FILE"
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-${{ github.run_id }}
+          path: |
+            ${{ env.DUMP_FILE }}.enc
+            ${{ env.DUMP_FILE }}.enc.sha256
+            ${{ env.DUMP_FILE }}.manifest.txt
+          if-no-files-found: error
+          retention-days: 30
