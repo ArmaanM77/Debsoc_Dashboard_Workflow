@@ -21,6 +21,13 @@ concurrency:
   group: guarded-render-rotation
   cancel-in-progress: false
 
+env:
+  RENDER_DATABASE_NAME: ${{ vars.RENDER_DATABASE_NAME }}
+  RENDER_SERVICE_NAME: ${{ vars.RENDER_SERVICE_NAME }}
+  RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID }}
+  RENDER_REGION: ${{ vars.RENDER_REGION }}
+  RENDER_POSTGRES_VERSION: ${{ vars.RENDER_POSTGRES_VERSION }}
+
 jobs:
   preflight:
     if: vars.RENDER_AUTOMATION_ENABLED == 'true' || github.event_name == 'workflow_dispatch'
@@ -29,6 +36,7 @@ jobs:
       due: ${{ steps.check.outputs.due }}
       database_exists: ${{ steps.check.outputs.database_exists }}
       recovery: ${{ steps.check.outputs.recovery }}
+      source_accessible: ${{ steps.check.outputs.source_accessible }}
       should_rotate: ${{ steps.decision.outputs.should_rotate }}
 
     steps:
@@ -78,7 +86,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Final Render to Supabase sync
-        if: needs.preflight.outputs.database_exists == 'true' && needs.preflight.outputs.recovery != 'true'
+        if: needs.preflight.outputs.database_exists == 'true' && needs.preflight.outputs.source_accessible == 'true'
         env:
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}

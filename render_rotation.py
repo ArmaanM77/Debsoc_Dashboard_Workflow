@@ -22,8 +22,8 @@ from render_api import (
 )
 
 
-DATABASE_NAME = os.environ.get("RENDER_DATABASE_NAME", "tabbycat_database")
-SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME", "tabbycat_website")
+DATABASE_NAME = os.environ.get("RENDER_DATABASE_NAME") or "tabbycat_database"
+SERVICE_NAME = os.environ.get("RENDER_SERVICE_NAME") or "tabbycat_website"
 ROTATE_AFTER_DAYS = int(os.environ.get("RENDER_ROTATE_AFTER_DAYS", "25"))
 ROTATION_STATE_KEY = "DEBSOC_ROTATION_STATE"
 SAFETY_TOKEN = "SYNC_AND_BACKUP_SUCCEEDED"
@@ -46,6 +46,9 @@ def postgres_plan(database):
 
 
 def postgres_status(database):
+    suspended = field(database, "suspended")
+    if suspended is True or str(suspended or "").lower() == "suspended":
+        return "suspended"
     status = field(database, "status", "state")
     if isinstance(status, dict):
         status = field(status, "name", "status")
@@ -88,7 +91,7 @@ def discover(client, *, database_required):
     if not owner_id:
         raise RenderAPIError("Render service has no workspace owner ID.")
 
-    configured_owner = os.environ.get("RENDER_OWNER_ID")
+    configured_owner = os.environ.get("RENDER_OWNER_ID") or None
     if configured_owner and configured_owner != owner_id:
         raise RenderAPIError("Safety stop: service owner does not match RENDER_OWNER_ID.")
 
@@ -114,6 +117,8 @@ def current_state(client):
         return {
             "due": True,
             "database_exists": False,
+            "database_status": "missing",
+            "source_accessible": False,
             "managed": rotation_state is not None,
             "recovery": True,
             "reason": "database_missing",
@@ -123,22 +128,32 @@ def current_state(client):
         }
 
     database_id = resource_id(database, "database")
+    database_status = postgres_status(database)
+    source_accessible = database_status not in {
+        "expired", "failed", "suspended", "unavailable", "deleted",
+    }
     created_at = parse_timestamp(field(database, "createdAt", "created_at"))
     if created_at is None:
         raise RenderAPIError("Render database has no creation timestamp.")
     age_days = (datetime.now(timezone.utc) - created_at).total_seconds() / 86400
     expected_state = f"ready:{database_id}"
     managed = rotation_state is not None
-    recovery = managed and rotation_state != expected_state
+    recovery = managed and (rotation_state != expected_state or not source_accessible)
     age_due = age_days >= ROTATE_AFTER_DAYS
     due = managed and (recovery or age_due)
-    reason = "recovery_required" if recovery else ("age_threshold" if age_due else "not_due")
+    reason = (
+        "database_unavailable"
+        if not source_accessible
+        else ("recovery_required" if recovery else ("age_threshold" if age_due else "not_due"))
+    )
     if not managed:
         reason = "not_adopted"
     return {
         "due": due,
         "database_exists": True,
         "database_id": database_id,
+        "database_status": database_status,
+        "source_accessible": source_accessible,
         "managed": managed,
         "recovery": recovery,
         "reason": reason,
@@ -152,7 +167,10 @@ def write_github_output(path, state):
     if not path:
         return
     with Path(path).open("a", encoding="utf-8") as output:
-        for key in ("due", "database_exists", "managed", "recovery", "reason", "age_days"):
+        for key in (
+            "due", "database_exists", "managed", "recovery", "reason", "age_days",
+            "source_accessible",
+        ):
             value = state[key]
             if isinstance(value, bool):
                 value = str(value).lower()
@@ -177,8 +195,8 @@ def adopt(client):
 def create_payload(previous, owner_id):
     database_name = field(previous or {}, "databaseName", "database_name", default="tabbycat")
     database_user = field(previous or {}, "databaseUser", "database_user", default="tabbycat")
-    region = field(previous or {}, "region", default=os.environ.get("RENDER_REGION", "oregon"))
-    version = field(previous or {}, "version", default=os.environ.get("RENDER_POSTGRES_VERSION", "17"))
+    region = field(previous or {}, "region", default=os.environ.get("RENDER_REGION") or "oregon")
+    version = field(previous or {}, "version", default=os.environ.get("RENDER_POSTGRES_VERSION") or "17")
     if isinstance(version, dict):
         version = field(version, "major", "version", "name", default="17")
     version = str(version).split(".")[0]

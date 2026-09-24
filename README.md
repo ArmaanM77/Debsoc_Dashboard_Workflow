@@ -44,6 +44,11 @@ Repository variable:
 
 - `RENDER_AUTOMATION_ENABLED`: keep `false` during setup and set to `true` only
   after the adoption dry run succeeds.
+- `RENDER_DATABASE_NAME`, `RENDER_SERVICE_NAME`, and `RENDER_OWNER_ID`: exact
+  identifiers discovered from the existing Blueprint. Exact matching is a
+  deletion safety boundary.
+- `RENDER_REGION` and `RENDER_POSTGRES_VERSION`: configuration reused when the
+  free database is recreated.
 
 `SOURCE_DB_URL` remains a temporary fallback and can be removed after Render
 discovery is verified.

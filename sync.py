@@ -50,8 +50,8 @@ def resolve_source_database():
     """
     render_key = os.environ.get('RENDER_API_KEY')
     if render_key:
-        database_name = os.environ.get('RENDER_DATABASE_NAME', DEFAULT_RENDER_DATABASE_NAME)
-        owner_id = os.environ.get('RENDER_OWNER_ID')
+        database_name = os.environ.get('RENDER_DATABASE_NAME') or DEFAULT_RENDER_DATABASE_NAME
+        owner_id = os.environ.get('RENDER_OWNER_ID') or None
         client = RenderClient(render_key)
         database = exact_resource(
             client.list_postgres(database_name),

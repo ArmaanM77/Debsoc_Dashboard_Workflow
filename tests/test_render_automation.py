@@ -64,7 +64,7 @@ class RenderAPIHelpersTests(unittest.TestCase):
 
 
 class RotationStateTests(unittest.TestCase):
-    def database(self, *, age_days):
+    def database(self, *, age_days, status="available"):
         created = datetime.now(timezone.utc) - timedelta(days=age_days)
         return {
             "id": "dpg-123",
@@ -72,6 +72,7 @@ class RotationStateTests(unittest.TestCase):
             "ownerId": "tea-123",
             "plan": "free",
             "createdAt": created.isoformat(),
+            "status": status,
         }
 
     def test_unadopted_database_never_rotates(self):
@@ -104,6 +105,17 @@ class RotationStateTests(unittest.TestCase):
         state = render_rotation.current_state(client)
         self.assertTrue(state["due"])
         self.assertTrue(state["recovery"])
+
+    def test_expired_database_skips_final_source_sync(self):
+        client = FakeRenderClient(
+            database=self.database(age_days=30, status="suspended"),
+            rotation_state="ready:dpg-123",
+        )
+        state = render_rotation.current_state(client)
+        self.assertTrue(state["due"])
+        self.assertTrue(state["recovery"])
+        self.assertFalse(state["source_accessible"])
+        self.assertEqual(state["reason"], "database_unavailable")
 
     def test_destructive_rotation_requires_workflow_guard(self):
         client = FakeRenderClient(
