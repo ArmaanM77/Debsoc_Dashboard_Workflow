@@ -49,6 +49,34 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: python render_rotation.py check --github-output "$GITHUB_OUTPUT"
 
+      - name: Validate the live Blueprint source
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'check'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          curl --fail --silent --show-error \
+            https://raw.githubusercontent.com/ArmaanM77/tabbycat_debsociitr/develop/render.yaml \
+            --output /tmp/render.yaml
+          curl --fail --silent --show-error \
+            --request POST https://api.render.com/v1/blueprints/validate \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --form "ownerId=$RENDER_OWNER_ID" \
+            --form "file=@/tmp/render.yaml" \
+            --output /tmp/blueprint-validation.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          result = json.loads(Path('/tmp/blueprint-validation.json').read_text())
+          print(json.dumps({
+              'valid': result.get('valid'),
+              'errors': result.get('errors', []),
+              'warnings': result.get('warnings', []),
+          }))
+          if result.get('valid') is not True:
+              raise SystemExit('Render rejected the Blueprint source.')
+          PY
+
       - name: Decide whether rotation is needed
         id: decision
         env:
