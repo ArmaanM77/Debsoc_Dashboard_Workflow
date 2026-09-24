@@ -31,3 +31,4 @@ jobs:
         env:
           SOURCE_DB_URL: ${{ secrets.SOURCE_DB_URL }}
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}

@@ -1,0 +1,125 @@
+name: Guarded Render Rotation
+
+on:
+  schedule:
+    - cron: '15 2 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check is read-only; adopt enables management; rotate performs the guarded workflow'
+        type: choice
+        options:
+          - check
+          - adopt
+          - rotate
+        default: check
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guarded-render-rotation
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: vars.RENDER_AUTOMATION_ENABLED == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+      database_exists: ${{ steps.check.outputs.database_exists }}
+      recovery: ${{ steps.check.outputs.recovery }}
+      should_rotate: ${{ steps.decision.outputs.should_rotate }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check exact Render resources
+        id: check
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: python render_rotation.py check --github-output "$GITHUB_OUTPUT"
+
+      - name: Decide whether rotation is needed
+        id: decision
+        env:
+          DUE: ${{ steps.check.outputs.due }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [[ "$DUE" == "true" || "$MODE" == "rotate" ]]; then
+            echo "should_rotate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_rotate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Adopt the current database without rotating it
+        if: inputs.mode == 'adopt'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: python render_rotation.py adopt
+
+  final-sync:
+    needs: preflight
+    if: needs.preflight.outputs.should_rotate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Final Render to Supabase sync
+        if: needs.preflight.outputs.database_exists == 'true' && needs.preflight.outputs.recovery != 'true'
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: python sync.py
+
+  safety-backup:
+    needs: [preflight, final-sync]
+    if: needs.preflight.outputs.should_rotate == 'true' && needs.final-sync.result == 'success'
+    uses: ./.github/workflows/backup-supabase.yml
+    secrets: inherit
+
+  rotate:
+    needs: [preflight, final-sync, safety-backup]
+    if: needs.safety-backup.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Rotate database and redeploy Tabbycat
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          ROTATION_SAFETY_TOKEN: SYNC_AND_BACKUP_SUCCEEDED
+          FORCE_ROTATION: ${{ inputs.mode == 'rotate' && 'true' || 'false' }}
+        run: |
+          args=(rotate --allow-destructive-rotation)
+          if [[ "$FORCE_ROTATION" == "true" ]]; then args+=(--force); fi
+          python render_rotation.py "${args[@]}"
+
+      - name: Mirror the fresh database to Supabase
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: python sync.py

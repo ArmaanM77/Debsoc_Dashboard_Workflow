@@ -7,14 +7,17 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import psycopg2
 from psycopg2.extras import execute_values
 
+from render_api import RenderClient, exact_resource, field, find_connection_string
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-SOURCE_URL = os.environ['SOURCE_DB_URL']
+SOURCE_URL = os.environ.get('SOURCE_DB_URL')
 DEST_URL = os.environ['DEST_DB_URL']
 CONNECT_RETRIES = 4
 CONNECT_RETRY_DELAY_SECONDS = 8
 SOURCE_ID_BLOCK = 1_000_000
+DEFAULT_RENDER_DATABASE_NAME = 'tabbycat_database'
 
 ID_COLUMN_NAMES = {'id', 'person_ptr_id', 'object_id'}
 
@@ -36,6 +39,35 @@ def with_default_sslmode(db_url):
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     query.setdefault('sslmode', 'require')
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def resolve_source_database():
+    """Return (connection URL, stable source identity).
+
+    Prefer Render's API whenever its key is available. The Postgres resource ID
+    changes on every rotation, so it is also a safe historical namespace even
+    when two deployments create tournaments with identical names in one month.
+    """
+    render_key = os.environ.get('RENDER_API_KEY')
+    if render_key:
+        database_name = os.environ.get('RENDER_DATABASE_NAME', DEFAULT_RENDER_DATABASE_NAME)
+        owner_id = os.environ.get('RENDER_OWNER_ID')
+        client = RenderClient(render_key)
+        database = exact_resource(
+            client.list_postgres(database_name),
+            wrapper='postgres',
+            name=database_name,
+            owner_id=owner_id,
+        )
+        database_id = field(database, 'id')
+        if not database_id:
+            raise RuntimeError('Render returned a Postgres resource without an ID.')
+        connection_info = client.postgres_connection_info(database_id)
+        return find_connection_string(connection_info, internal=False), f'render:{database_id}'
+
+    if not SOURCE_URL:
+        raise RuntimeError('Set RENDER_API_KEY or SOURCE_DB_URL to locate the Tabbycat database.')
+    return SOURCE_URL, None
 
 
 def connect_with_retry(label, db_url):
@@ -147,8 +179,9 @@ def has_existing_dashboard_data(dest_conn):
         return bool(cur.fetchone()[0])
 
 
-def get_source_offset(src_conn, dest_conn):
-    fingerprint = get_source_fingerprint(src_conn)
+def get_source_offset(src_conn, dest_conn, source_identity=None):
+    legacy_fingerprint = get_source_fingerprint(src_conn)
+    fingerprint = source_identity or legacy_fingerprint
     has_legacy_data = has_existing_dashboard_data(dest_conn)
     ensure_sync_sources_table(dest_conn)
 
@@ -173,6 +206,32 @@ def get_source_offset(src_conn, dest_conn):
             )
             dest_conn.commit()
             return int(existing[0])
+
+        # Upgrade path: before Render discovery was introduced, the source was
+        # keyed only by tournament names. Alias the current Render database to
+        # that existing offset instead of duplicating all of its rows once.
+        if source_identity:
+            cur.execute(
+                """
+                SELECT id_offset
+                FROM dashboard_sync_sources
+                WHERE fingerprint = %s
+                """,
+                (legacy_fingerprint,)
+            )
+            legacy = cur.fetchone()
+            if legacy:
+                offset = int(legacy[0])
+                cur.execute(
+                    """
+                    INSERT INTO dashboard_sync_sources (fingerprint, id_offset)
+                    VALUES (%s, %s)
+                    """,
+                    (fingerprint, offset)
+                )
+                dest_conn.commit()
+                log.info('Aliased current Render source to existing ID offset %s', offset)
+                return offset
 
         cur.execute('SELECT COALESCE(MAX(id_offset), -1000000) FROM dashboard_sync_sources')
         max_offset = int(cur.fetchone()[0])
@@ -296,9 +355,10 @@ def sync_table(src_conn, dest_conn, table, source_offset):
 
 def main():
     log.info('Connecting...')
-    src = connect_with_retry('source', SOURCE_URL)
+    source_url, source_identity = resolve_source_database()
+    src = connect_with_retry('source', source_url)
     dest = connect_with_retry('destination', DEST_URL)
-    source_offset = get_source_offset(src, dest)
+    source_offset = get_source_offset(src, dest, source_identity)
     log.info(f'Using source ID offset: {source_offset}')
 
     tables = [t for t in get_tables(src) if t not in SKIP_TABLES]
@@ -318,7 +378,7 @@ def main():
     dest.close()
 
     if failed:
-        log.warning(f'Failed tables: {failed}')
+        raise RuntimeError(f'Sync failed for tables: {failed}')
     else:
         log.info('Sync complete — all tables OK.')
 
