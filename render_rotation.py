@@ -292,7 +292,10 @@ def create_payload(previous, owner_id):
         "region": region,
         "version": version,
         "connectionPool": "none",
-        "ipAllowList": [{"source": "0.0.0.0/0", "description": "GitHub Actions sync"}],
+        "ipAllowList": [{
+            "cidrBlock": "0.0.0.0/0",
+            "description": "GitHub Actions sync",
+        }],
     }
 
 

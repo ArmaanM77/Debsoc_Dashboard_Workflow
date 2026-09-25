@@ -93,6 +93,13 @@ class RenderAPIHelpersTests(unittest.TestCase):
             "postgresql://external/db",
         )
 
+    def test_create_payload_uses_render_cidr_field(self):
+        payload = render_rotation.create_payload(None, "tea-123")
+        self.assertEqual(payload["ipAllowList"], [{
+            "cidrBlock": "0.0.0.0/0",
+            "description": "GitHub Actions sync",
+        }])
+
 
 class RotationStateTests(unittest.TestCase):
     def database(self, *, age_days, status="available"):
