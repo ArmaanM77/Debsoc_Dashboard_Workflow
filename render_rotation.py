@@ -15,10 +15,12 @@ from urllib.request import Request, urlopen
 from render_api import (
     RenderAPIError,
     RenderClient,
+    env_value,
     exact_resource,
     field,
     find_connection_string,
-    unwrap,
+    managed_postgres_resource,
+    resource_owner_id,
 )
 
 
@@ -62,15 +64,6 @@ def resource_id(resource, label):
     return value
 
 
-def env_value(payload):
-    payload = unwrap(payload, "envVar")
-    if isinstance(payload, dict):
-        value = field(payload, "value")
-        if isinstance(value, str):
-            return value
-    return None
-
-
 def get_rotation_state(client, service_id):
     try:
         return env_value(client.retrieve_env_var(service_id, ROTATION_STATE_KEY))
@@ -87,7 +80,7 @@ def discover(client, *, database_required):
         name=SERVICE_NAME,
     )
     service_id = resource_id(service, "service")
-    owner_id = field(service, "ownerId", "owner_id")
+    owner_id = resource_owner_id(service)
     if not owner_id:
         raise RenderAPIError("Render service has no workspace owner ID.")
 
@@ -95,9 +88,9 @@ def discover(client, *, database_required):
     if configured_owner and configured_owner != owner_id:
         raise RenderAPIError("Safety stop: service owner does not match RENDER_OWNER_ID.")
 
-    database = exact_resource(
-        client.list_postgres(DATABASE_NAME),
-        wrapper="postgres",
+    database = managed_postgres_resource(
+        client,
+        service_id=service_id,
         name=DATABASE_NAME,
         owner_id=owner_id,
         required=database_required,

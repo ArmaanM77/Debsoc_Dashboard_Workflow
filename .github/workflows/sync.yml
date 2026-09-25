@@ -33,4 +33,5 @@ jobs:
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_DATABASE_NAME: ${{ vars.RENDER_DATABASE_NAME }}
+          RENDER_SERVICE_NAME: ${{ vars.RENDER_SERVICE_NAME }}
           RENDER_OWNER_ID: ${{ vars.RENDER_OWNER_ID }}

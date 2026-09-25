@@ -7,7 +7,14 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import psycopg2
 from psycopg2.extras import execute_values
 
-from render_api import RenderClient, exact_resource, field, find_connection_string
+from render_api import (
+    RenderClient,
+    exact_resource,
+    field,
+    find_connection_string,
+    managed_postgres_resource,
+    resource_owner_id,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
@@ -51,11 +58,23 @@ def resolve_source_database():
     render_key = os.environ.get('RENDER_API_KEY')
     if render_key:
         database_name = os.environ.get('RENDER_DATABASE_NAME') or DEFAULT_RENDER_DATABASE_NAME
-        owner_id = os.environ.get('RENDER_OWNER_ID') or None
+        configured_owner = os.environ.get('RENDER_OWNER_ID') or None
         client = RenderClient(render_key)
-        database = exact_resource(
-            client.list_postgres(database_name),
-            wrapper='postgres',
+        service_name = os.environ.get('RENDER_SERVICE_NAME') or 'tabbycat_website'
+        service = exact_resource(
+            client.list_services(service_name),
+            wrapper='service',
+            name=service_name,
+        )
+        service_id = field(service, 'id')
+        owner_id = resource_owner_id(service)
+        if not service_id or not owner_id:
+            raise RuntimeError('Render returned a service without an ID or workspace owner.')
+        if configured_owner and configured_owner != owner_id:
+            raise RuntimeError('Safety stop: Render service owner does not match RENDER_OWNER_ID.')
+        database = managed_postgres_resource(
+            client,
+            service_id=service_id,
             name=database_name,
             owner_id=owner_id,
         )

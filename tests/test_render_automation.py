@@ -4,7 +4,12 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import render_rotation
-from render_api import RenderAPIError, exact_resource, find_connection_string
+from render_api import (
+    RenderAPIError,
+    exact_resource,
+    find_connection_string,
+    managed_postgres_resource,
+)
 
 
 class FakeRenderClient:
@@ -28,9 +33,18 @@ class FakeRenderClient:
         return [{"postgres": self.database}]
 
     def retrieve_env_var(self, service_id, key):
+        if key == "DEBSOC_RENDER_DATABASE_ID":
+            if self.database is None:
+                raise RenderAPIError("Render API GET env returned HTTP 404.")
+            return {"envVar": {"key": key, "value": self.database["id"]}}
         if self.rotation_state is None:
             raise RenderAPIError("Render API GET env returned HTTP 404.")
         return {"envVar": {"key": key, "value": self.rotation_state}}
+
+    def retrieve_postgres(self, postgres_id):
+        if self.database is None or self.database["id"] != postgres_id:
+            raise RenderAPIError("Render API GET postgres returned HTTP 404.")
+        return self.database
 
     def update_service(self, service_id, payload):
         self.updated_service = (service_id, payload)
@@ -99,6 +113,22 @@ class RenderAPIHelpersTests(unittest.TestCase):
             "cidrBlock": "0.0.0.0/0",
             "description": "GitHub Actions sync",
         }])
+
+    def test_managed_database_uses_stored_id_when_list_is_empty(self):
+        database = {
+            "id": "dpg-new",
+            "name": render_rotation.DATABASE_NAME,
+            "owner": {"id": "tea-123"},
+        }
+        client = FakeRenderClient(database=database, rotation_state="ready:dpg-new")
+        client.list_postgres = lambda name: []
+        result = managed_postgres_resource(
+            client,
+            service_id="srv-123",
+            name=render_rotation.DATABASE_NAME,
+            owner_id="tea-123",
+        )
+        self.assertEqual(result["id"], "dpg-new")
 
 
 class RotationStateTests(unittest.TestCase):

@@ -35,13 +35,29 @@ def unwrap(payload, resource_name):
     return payload
 
 
+def resource_owner_id(resource):
+    owner = field(resource, "ownerId", "owner_id", "owner")
+    if isinstance(owner, dict):
+        owner = field(owner, "id", "ownerId", "owner_id")
+    return owner
+
+
+def env_value(payload):
+    payload = unwrap(payload, "envVar")
+    if isinstance(payload, dict):
+        value = field(payload, "value")
+        if isinstance(value, str):
+            return value
+    return None
+
+
 def exact_resource(resources, *, wrapper, name, owner_id=None, required=True):
     matches = []
     for item in resources:
         resource = unwrap(item, wrapper)
         if not isinstance(resource, dict) or resource.get("name") != name:
             continue
-        if owner_id and field(resource, "ownerId", "owner_id") != owner_id:
+        if owner_id and resource_owner_id(resource) != owner_id:
             continue
         matches.append(resource)
 
@@ -54,6 +70,54 @@ def exact_resource(resources, *, wrapper, name, owner_id=None, required=True):
             raise RenderAPIError(f"Render {wrapper} resource named {name!r} was not found.")
         return None
     return matches[0]
+
+
+def managed_postgres_resource(
+    client,
+    *,
+    service_id,
+    name,
+    owner_id=None,
+    required=True,
+    database_id_key="DEBSOC_RENDER_DATABASE_ID",
+):
+    """Find the managed database by its exact stored ID, then by exact name.
+
+    Render's list endpoint can omit a newly provisioned database. The service
+    environment stores the authoritative resource ID after provisioning, so use
+    it first while retaining exact-name discovery for initial adoption/recovery.
+    """
+    database_id = None
+    try:
+        database_id = env_value(client.retrieve_env_var(service_id, database_id_key))
+    except RenderAPIError as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+
+    if database_id:
+        try:
+            database = client.retrieve_postgres(database_id)
+        except RenderAPIError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+        else:
+            if field(database, "name") != name:
+                raise RenderAPIError(
+                    "Safety stop: stored Render database ID does not match the configured name."
+                )
+            if owner_id and resource_owner_id(database) != owner_id:
+                raise RenderAPIError(
+                    "Safety stop: stored Render database ID belongs to another workspace."
+                )
+            return database
+
+    return exact_resource(
+        client.list_postgres(name),
+        wrapper="postgres",
+        name=name,
+        owner_id=owner_id,
+        required=required,
+    )
 
 
 def find_connection_string(payload, *, internal):
