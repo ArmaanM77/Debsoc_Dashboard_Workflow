@@ -1,0 +1,32 @@
+name: Install member profile schema
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: member-profile-schema
+  cancel-in-progress: false
+jobs:
+  backup:
+    uses: ./.github/workflows/backup-supabase.yml
+    secrets: inherit
+  install:
+    needs: backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply additive tables and owner-only policies in one transaction
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/workspace:ro" postgres:17 \
+            psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
+            --file=/workspace/migrations/20261023_member_profiles.sql
+      - name: Verify owner policies and safe public projection
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          docker run --rm postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 -c \
+            "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename IN ('dk_profiles','dk_tournament_entries');"
