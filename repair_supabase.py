@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import psycopg2
 
 
-PRESERVE_TABLES = {'dashboard_settings'}
+PRESERVE_TABLES = {'dashboard_settings', 'dk_profiles', 'dk_tournament_entries'}
 
 
 def with_default_sslmode(db_url):
