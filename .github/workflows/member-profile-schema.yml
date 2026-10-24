@@ -24,9 +24,14 @@ jobs:
           docker run --rm -v "$PWD:/workspace:ro" postgres:17 \
             psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
             --file=/workspace/migrations/20261023_member_profiles.sql
+          docker run --rm -v "$PWD:/workspace:ro" postgres:17 \
+            psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
+            --file=/workspace/migrations/20261024_unique_member_claims.sql
       - name: Verify owner policies and safe public projection
         env:
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
         run: |
           docker run --rm postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 -c \
             "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename IN ('dk_profiles','dk_tournament_entries');"
+          docker run --rm postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 -c \
+            "SELECT to_regclass('public.dk_profiles_member_identity') IS NOT NULL AS unique_claim_index, has_function_privilege('authenticated','public.dk_claimed_members()','EXECUTE') AS member_lookup, NOT has_function_privilege('anon','public.dk_claimed_members()','EXECUTE') AS anonymous_lookup_denied;"
