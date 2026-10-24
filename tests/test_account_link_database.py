@@ -19,7 +19,9 @@ class AccountLinkDatabaseTest(unittest.TestCase):
                         'postgres:17'], check=True, capture_output=True, timeout=120)
         cls.addClassCleanup(lambda: subprocess.run(['docker', 'stop', cls.container], capture_output=True, timeout=30))
         for _ in range(100):
-            ready = subprocess.run(['docker', 'exec', cls.container, 'pg_isready', '-U', 'postgres'], capture_output=True)
+            # The image briefly starts a Unix-socket-only initialization server.
+            # TCP becomes ready only after that server exits and the real one starts.
+            ready = subprocess.run(['docker', 'exec', cls.container, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], capture_output=True)
             if ready.returncode == 0:
                 break
             time.sleep(.2)
@@ -46,7 +48,7 @@ class AccountLinkDatabaseTest(unittest.TestCase):
 
     @classmethod
     def command(cls):
-        return ['docker', 'exec', '-i', cls.container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-t', '-A']
+        return ['docker', 'exec', '-i', cls.container, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-t', '-A']
 
     @classmethod
     def sql(cls, sql, success=True):
