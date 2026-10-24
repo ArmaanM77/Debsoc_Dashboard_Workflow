@@ -104,6 +104,21 @@ class AccountLinkDatabaseTest(unittest.TestCase):
         self.sql(self.claim(7, 'Not Google'), success=False)
         self.sql(self.as_user(2, f"INSERT INTO public.dk_profiles(user_id,member_name,display_name) VALUES ('{self.user_id(1)}','Wrong account','X')"), success=False)
 
+    def test_public_feed_exposes_only_allowlisted_character_choices(self):
+        self.sql((ROOT / 'migrations/20261024_member_characters.sql').read_text())
+        self.sql(self.claim(1, 'Alice'))
+        self.sql(self.claim(2, 'Bob'))
+        self.sql(self.as_user(1, """UPDATE public.dk_profiles SET avatar_config=
+         '{"bio":"PRIVATE BIO","theme":"rose","character":{"body":"16","eyes":"3","email":"PRIVATE EMAIL","user_id":"PRIVATE ID","url":"https://example.invalid","version":1}}';"""))
+        result = self.sql('SET ROLE anon; SELECT row_to_json(c) FROM public.dk_member_characters() c;').stdout
+        self.assertIn('"member_name":"Alice"', result)
+        self.assertIn('"character":', result)
+        self.assertIn('"body": "16"', result)
+        self.assertNotIn('PRIVATE', result)
+        self.assertNotIn('Bob', result)
+        self.assertNotIn('"url"', result)
+        self.sql('SET ROLE anon; SELECT * FROM public.dk_profiles', success=False)
+
     def test_simultaneous_claims_have_exactly_one_winner(self):
         commands = [self.claim(1, 'Race Name'), self.claim(2, 'RACE  NAME')]
         processes = [subprocess.Popen(self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in commands]

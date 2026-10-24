@@ -6,7 +6,7 @@ class MemberCharacterProjectionTest(unittest.TestCase):
     def test_projection_exposes_only_name_and_whitelisted_character_choices(self):
         root = Path(__file__).resolve().parents[1]
         sql = (root / 'migrations/20261024_member_characters.sql').read_text()
-        self.assertIn('RETURNS TABLE (member_name text, character jsonb)', sql)
+        self.assertIn('RETURNS TABLE (member_name text, "character" jsonb)', sql)
         self.assertIn("SECURITY DEFINER SET search_path = ''", sql)
         self.assertIn('REVOKE ALL ON FUNCTION', sql)
         self.assertIn('TO anon, authenticated', sql)
