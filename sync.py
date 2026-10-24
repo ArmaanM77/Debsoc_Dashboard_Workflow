@@ -30,6 +30,9 @@ ID_COLUMN_NAMES = {'id', 'person_ptr_id', 'object_id'}
 
 # Django internal tables we don't need to sync
 SKIP_TABLES = {
+    # These belong to the dashboard, never the rotating Tabbycat source.
+    'dk_profiles',
+    'dk_tournament_entries',
     'django_migrations',
     'django_session',
     'django_content_type',
