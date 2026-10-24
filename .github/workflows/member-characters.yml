@@ -1,0 +1,32 @@
+name: Publish member character feed
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: member-profile-schema
+  cancel-in-progress: false
+jobs:
+  backup:
+    uses: ./.github/workflows/backup-supabase.yml
+    secrets: inherit
+  install:
+    needs: backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add read-only public character projection
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/workspace:ro" postgres:17 \
+            psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
+            --file=/workspace/migrations/20261024_member_characters.sql
+      - name: Verify private profiles remain private
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          docker run --rm postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF has_table_privilege('anon','public.dk_profiles','SELECT') OR NOT has_function_privilege('anon','public.dk_member_characters()','EXECUTE') THEN RAISE EXCEPTION 'Unsafe character feed permissions'; END IF; END \$\$;"
