@@ -1,5 +1,6 @@
 """Integration checks in a disposable PostgreSQL container; never uses DEST_DB_URL."""
 import os
+import json
 from pathlib import Path
 import subprocess
 import time
@@ -132,6 +133,27 @@ class AccountLinkDatabaseTest(unittest.TestCase):
             process.stdout.close(); process.stderr.close()
         self.assertEqual(sum(code == 0 for code in outcomes), 1)
         self.assertEqual(self.sql('SELECT count(*) FROM public.dk_profiles').stdout.strip(), '1')
+
+    def test_public_appearance_feed_only_adds_allowlisted_theme_without_changing_profiles(self):
+        self.sql((ROOT / 'migrations/20261024_member_characters.sql').read_text())
+        for number, name in [(1, 'Alice'), (2, 'Bob'), (3, 'Carol')]:
+            self.sql(self.claim(number, name))
+        self.sql(self.as_user(1, """UPDATE public.dk_profiles SET avatar_config=
+          '{"theme":"rose","bio":"PRIVATE BIO","character":{"body":"16","eyes":"3","email":"PRIVATE EMAIL"}}';"""))
+        self.sql(self.as_user(2, """UPDATE public.dk_profiles SET avatar_config=
+          '{"theme":"invalid","character":{"body":"2"}}';"""))
+        before = self.sql('SELECT jsonb_agg(to_jsonb(p) ORDER BY member_name) FROM public.dk_profiles p').stdout
+        self.sql((ROOT / 'migrations/20261026_member_appearances.sql').read_text())
+        after = self.sql('SELECT jsonb_agg(to_jsonb(p) ORDER BY member_name) FROM public.dk_profiles p').stdout
+        self.assertEqual(before, after)
+        output = self.sql('SET ROLE anon; SELECT row_to_json(c) FROM public.dk_member_appearances() c').stdout
+        rows = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
+        self.assertEqual([row['member_name'] for row in rows], ['Alice', 'Bob'])
+        self.assertEqual([row['theme'] for row in rows], ['rose', 'sage'])
+        for row in rows:
+            self.assertEqual(set(row), {'member_name', 'character', 'theme'})
+        self.assertNotIn('PRIVATE', output)
+        self.sql('SET ROLE anon; SELECT * FROM public.dk_profiles', success=False)
 
     def test_duplicate_preflight_rolls_back_without_removing_accounts(self):
         self.sql('DROP INDEX public.dk_profiles_canonical_member_identity;')
