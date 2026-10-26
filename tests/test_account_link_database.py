@@ -122,6 +122,26 @@ class AccountLinkDatabaseTest(unittest.TestCase):
         self.assertNotIn('"url"', result)
         self.sql('SET ROLE anon; SELECT * FROM public.dk_profiles', success=False)
 
+    def test_public_bios_support_members_without_characters_and_keep_private_fields_out(self):
+        self.sql((ROOT / 'migrations/20261024_member_characters.sql').read_text())
+        self.sql(self.claim(1, 'Alice'))
+        self.sql(self.claim(2, 'Bob'))
+        self.sql(self.as_user(1, """UPDATE public.dk_profiles SET avatar_config=
+          '{"bio":"Hello <b>world</b>","secret":"PRIVATE","character":{"body":"16","email":"PRIVATE"}}';"""))
+        self.sql(self.as_user(2, "UPDATE public.dk_profiles SET avatar_config=jsonb_build_object('bio',repeat('x',200));"))
+        before = self.sql('SELECT jsonb_agg(to_jsonb(p) ORDER BY member_name) FROM public.dk_profiles p').stdout
+        self.sql((ROOT / 'migrations/20261026_public_member_bios.sql').read_text())
+        self.assertEqual(before, self.sql('SELECT jsonb_agg(to_jsonb(p) ORDER BY member_name) FROM public.dk_profiles p').stdout)
+        output = self.sql('SET ROLE anon; SELECT row_to_json(c) FROM public.dk_member_appearances_v2() c').stdout
+        rows = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
+        self.assertEqual([r['member_name'] for r in rows], ['Alice', 'Bob'])
+        self.assertEqual(rows[0]['bio'], 'Hello <b>world</b>')
+        self.assertEqual(len(rows[1]['bio']), 160)
+        self.assertIsNone(rows[1]['character'])
+        self.assertNotIn('PRIVATE', output)
+        self.assertTrue(all(set(r) == {'member_name', 'character', 'theme', 'bio'} for r in rows))
+        self.sql('SET ROLE anon; SELECT * FROM public.dk_profiles', success=False)
+
     def test_simultaneous_claims_have_exactly_one_winner(self):
         commands = [self.claim(1, 'Race Name'), self.claim(2, 'RACE  NAME')]
         processes = [subprocess.Popen(self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in commands]
