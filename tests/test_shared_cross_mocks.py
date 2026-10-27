@@ -100,6 +100,14 @@ class SharedCrossMocksTest(Database):
         self.simple(2,self.entry(opponent=''),success=False)
         self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'2')
 
+    def test_distinct_short_university_codes_are_not_fuzzy_typo_matches(self):
+        first=self.simple(entry=self.entry(opponent='IITD'))
+        second=self.simple(entry=self.entry(opponent='IITB'))
+        self.assertNotEqual(first,second)
+        self.assertEqual(first,self.simple(2,self.entry(opponent='Indian Institute of Technology Delhi')))
+        self.assertEqual(second,self.simple(2,self.entry(opponent='IIT Bombay')))
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'2')
+
     def test_partial_groups_without_overlap_are_not_guessed_into_existing_teams(self):
         game=self.simple(entry=self.entry(participants=[self.speaker('alice')]))
         self.simple(2,self.entry(participants=[self.speaker('bob')]),success=False)

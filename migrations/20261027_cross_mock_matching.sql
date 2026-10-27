@@ -101,6 +101,8 @@ BEGIN
     kb:=public.dk_cross_uni_key(y);
     IF x=y OR replace(x,' ','')=replace(y,' ','') OR
       (ka=kb AND (replace(x,' ','')=ka OR replace(y,' ','')=kb)) THEN pair_score:=1;
+    ELSIF ka<>kb AND length(replace(x,' ',''))<=6 AND length(replace(y,' ',''))<=6 THEN
+     pair_score:=0; -- Different short codes are not spelling mistakes (IITD != IITB).
     ELSE pair_score:=public.dk_cross_motion_match(x,y);END IF;
     best:=greatest(best,pair_score);
    END LOOP;
