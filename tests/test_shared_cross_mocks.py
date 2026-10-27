@@ -10,6 +10,7 @@ class SharedCrossMocksTest(Database):
         super().setUpClass()
         cls.sql('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon,authenticated;')
         cls.sql((__import__('pathlib').Path(__file__).resolve().parents[1] / 'migrations/20261027_shared_cross_mocks.sql').read_text())
+        cls.sql((__import__('pathlib').Path(__file__).resolve().parents[1] / 'migrations/20261027_simple_cross_mock_submission.sql').read_text())
         cls.sql("INSERT INTO public.dk_cross_roster(member_key,member_name,year) SELECT lower(n),n,'1' FROM unnest(ARRAY['Alice','Bob','Carol','Dave','Eve','Frank','Grace','Hana','Ivan']) n")
 
     def setUp(self):
@@ -38,6 +39,39 @@ class SharedCrossMocksTest(Database):
 
     def scalar(self, sql):
         return self.sql(sql).stdout.strip()
+
+    def simple(self, number=1, entry=None, success=True):
+        data=dict(entry or self.entry());data.pop('round_label',None)
+        command=self.query(number,data).replace('dk_cross_submit(', 'dk_cross_submit_simple(')
+        result=self.sql(command,success=success)
+        return result.stdout.strip().splitlines()[-1] if success else result
+
+    def test_simple_form_merges_without_round_or_debate_selector(self):
+        game=self.simple()
+        self.assertEqual(game,self.simple(2))
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'1')
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_participants WHERE confirmed'),'2')
+
+    def test_simple_form_reuses_legacy_record_without_rewriting_its_room(self):
+        game=self.save(entry=self.entry(round_label='Original room'))
+        self.assertEqual(game,self.simple(2))
+        self.assertEqual(self.scalar('SELECT round_label FROM public.dk_cross_debates'),'Original room')
+
+    def test_simple_form_recognises_existing_team_for_individual_teammate_submission(self):
+        game=self.save(entry=self.entry(participants=[self.speaker('alice',2),self.speaker('bob',2)]))
+        self.assertEqual(game,self.simple(2,self.entry(participants=[self.speaker('bob')])) )
+        self.assertEqual(self.scalar("SELECT team_slot FROM public.dk_cross_participants WHERE member_key='bob'"),'2')
+
+    def test_ambiguous_legacy_rounds_are_never_silently_combined(self):
+        self.save();self.save(entry=self.entry(round_label='R2 A'))
+        self.simple(2,success=False)
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'2')
+
+    def test_simple_submission_keeps_identity_privacy_motion_and_cap_checks(self):
+        self.simple(entry=self.entry(motion=''),success=False)
+        self.simple(entry=self.entry(participants=[self.speaker(n) for n in ['alice','bob','carol','dave']]),success=False)
+        self.sql("SET ROLE anon; SELECT public.dk_cross_submit_simple('{}')",success=False)
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'0')
 
     def test_shared_team_submissions_are_idempotent_and_self_confirmed(self):
         game=self.save()

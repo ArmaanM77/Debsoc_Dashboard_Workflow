@@ -2,7 +2,7 @@ name: Activate shared cross mocks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['migrations/20261027_shared_cross_mocks.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
+    paths: ['migrations/20261027*cross_mock*.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
 permissions:
   contents: read
 concurrency:
@@ -36,6 +36,7 @@ jobs:
           DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
         run: |
           docker run --rm -v "$PWD:/workspace:ro" postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction --file=/workspace/migrations/20261027_shared_cross_mocks.sql
+          docker run --rm -v "$PWD:/workspace:ro" postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction --file=/workspace/migrations/20261027_simple_cross_mock_submission.sql
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
