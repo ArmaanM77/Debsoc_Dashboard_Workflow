@@ -141,8 +141,10 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
  JOIN public.dk_cross_roster r ON r.member_key=p.member_key
  GROUP BY d.id ORDER BY d.debated_on DESC,d.created_at DESC
 $$;
-REVOKE ALL ON FUNCTION public.dk_cross_actor(),public.dk_cross_key(text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.dk_cross_submit(jsonb),public.dk_cross_confirm(uuid),public.dk_cross_retract(uuid),public.dk_cross_roster_feed(),public.dk_cross_debates_feed() FROM PUBLIC;
+-- Supabase can grant anon/authenticated EXECUTE through default privileges,
+-- independently of PUBLIC. Clear all three before granting the exact API surface.
+REVOKE ALL ON FUNCTION public.dk_cross_actor(),public.dk_cross_key(text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.dk_cross_submit(jsonb),public.dk_cross_confirm(uuid),public.dk_cross_retract(uuid),public.dk_cross_roster_feed(),public.dk_cross_debates_feed() FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.dk_cross_submit(jsonb),public.dk_cross_confirm(uuid),public.dk_cross_retract(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.dk_cross_roster_feed(),public.dk_cross_debates_feed() TO anon,authenticated;
 NOTIFY pgrst,'reload schema';
