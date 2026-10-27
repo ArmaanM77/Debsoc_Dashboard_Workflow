@@ -8,6 +8,7 @@ class SharedCrossMocksTest(Database):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls.sql('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon,authenticated;')
         cls.sql((__import__('pathlib').Path(__file__).resolve().parents[1] / 'migrations/20261027_shared_cross_mocks.sql').read_text())
         cls.sql("INSERT INTO public.dk_cross_roster(member_key,member_name,year) SELECT lower(n),n,'1' FROM unnest(ARRAY['Alice','Bob','Carol','Dave','Eve','Frank','Grace','Hana','Ivan']) n")
 
@@ -111,6 +112,10 @@ class SharedCrossMocksTest(Database):
             self.sql(f'SET ROLE anon; SELECT * FROM public.{table}',success=False)
             if table!='dk_profiles':self.sql(self.as_user(1,f'SELECT * FROM public.{table}'),success=False)
         self.sql("SET ROLE anon; SELECT public.dk_cross_submit('{}')",success=False)
+        self.assertIn('permission denied',self.sql("SET ROLE anon; SELECT public.dk_cross_submit('{}')",success=False).stderr)
+        for function in ["dk_cross_actor()","dk_cross_key('Alice')"]:
+            self.sql(f'SET ROLE anon; SELECT public.{function}',success=False)
+            self.sql(self.as_user(1,f'SELECT public.{function}'),success=False)
 
     def test_concurrent_team_submissions_share_a_single_debate(self):
         commands=[self.query(1,self.entry()),self.query(2,self.entry())]
