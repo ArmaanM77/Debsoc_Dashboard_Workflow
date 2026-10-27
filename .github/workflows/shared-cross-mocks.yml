@@ -2,7 +2,7 @@ name: Activate shared cross mocks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['migrations/20261027*cross_mock*.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
+    paths: ['migrations/20261027*cross_mock*.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','docs/shared-cross-mocks.md','.github/workflows/shared-cross-mocks.yml']
 permissions:
   contents: read
 concurrency:
