@@ -2,7 +2,7 @@ name: Activate shared cross mocks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['migrations/20261027_shared_cross_mocks.sql','tests/test_shared_cross_mocks.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
+    paths: ['migrations/20261027_shared_cross_mocks.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
 permissions:
   contents: read
 concurrency:
@@ -18,6 +18,8 @@ jobs:
         env:
           RUN_POSTGRES_TESTS: '1'
         run: python -m unittest discover -s tests -p 'test_shared_cross_mocks.py'
+      - name: Verify roster parsing fails safely on invalid sheets
+        run: python -m unittest discover -s tests -p 'test_cross_roster_sync.py'
   backup:
     if: github.event_name == 'workflow_dispatch'
     needs: verify

@@ -4,7 +4,6 @@ import io
 import os
 import re
 import urllib.request
-import psycopg2
 
 URL = 'https://docs.google.com/spreadsheets/d/1niJnThDu6Y1vNxQBRQ3b2inEdQKU-7ZHxSD0PyR8bTA/export?format=csv&gid=0'
 
@@ -22,16 +21,21 @@ def parse_roster(text):
         if not year or key in seen:
             raise ValueError('Invalid or duplicate society roster row')
         seen.add(key)
-        result.append((key, name, year, row.get('Graduation Year', '').strip()))
+        graduation_year = row.get('Graduation Year', '').strip()
+        if graduation_year and not re.fullmatch(r'\d{4}', graduation_year):
+            raise ValueError('Graduation year must contain four digits')
+        result.append((key, name, year, graduation_year))
     if not result:
         raise ValueError('Empty society roster; refusing replacement')
     return result
 
 def main():
+    import psycopg2
     with urllib.request.urlopen(URL, timeout=40) as response:
         rows = parse_roster(response.read().decode('utf-8-sig'))
     with psycopg2.connect(os.environ['DEST_DB_URL']) as connection:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext('dk-cross-roster-sync'))")
             cursor.execute("SELECT to_regclass('public.dk_cross_roster')")
             if cursor.fetchone()[0] is None:
                 print('Shared cross-mock schema not installed; roster sync skipped.')
