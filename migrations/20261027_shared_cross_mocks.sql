@@ -59,11 +59,11 @@ DECLARE actor text:=public.dk_cross_actor(); game uuid; day date; fmt text; agai
  room text; slide text; ident text; item jsonb; member text; participant_role text; slot integer;
  sp numeric; adj numeric; old public.dk_cross_participants%ROWTYPE; cap integer; total integer;
 BEGIN
- day:=(payload->>'debated_on')::date;fmt:=payload->>'format';against:=btrim(payload->>'opponent');
+ day:=(payload->>'debated_on')::date;fmt:=payload->>'format';against:=btrim(coalesce(payload->>'opponent',''));
  motion_text:=btrim(payload->>'motion');room:=btrim(payload->>'round_label');slide:=btrim(coalesce(payload->>'info_slide',''));
  IF day IS NULL OR day>(now() AT TIME ZONE 'Asia/Kolkata')::date OR fmt IS NULL OR fmt NOT IN ('AP','BP')
-  OR coalesce(length(against),0)=0 OR coalesce(length(motion_text),0)=0 OR coalesce(length(room),0)=0 THEN
-  RAISE EXCEPTION 'Date, Against, format, round/room and motion are required'; END IF;
+  OR coalesce(length(motion_text),0)=0 OR coalesce(length(room),0)=0 THEN
+  RAISE EXCEPTION 'Date, format, round/room and motion are required'; END IF;
  IF jsonb_typeof(payload->'participants') IS DISTINCT FROM 'array' OR jsonb_array_length(payload->'participants')<1 THEN
   RAISE EXCEPTION 'Select at least yourself'; END IF;
  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(payload->'participants') p WHERE p->>'member_key'=actor) THEN
