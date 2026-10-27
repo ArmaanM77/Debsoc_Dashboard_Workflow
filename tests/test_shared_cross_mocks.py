@@ -100,6 +100,22 @@ class SharedCrossMocksTest(Database):
         self.simple(2,self.entry(opponent=''),success=False)
         self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'2')
 
+    def test_partial_groups_without_overlap_are_not_guessed_into_existing_teams(self):
+        game=self.simple(entry=self.entry(participants=[self.speaker('alice')]))
+        self.simple(2,self.entry(participants=[self.speaker('bob')]),success=False)
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_participants'),'1')
+        self.assertEqual(game,self.simple(2,self.entry(participants=[self.speaker('alice'),self.speaker('bob')])))
+        self.assertEqual(game,self.simple(3,self.entry(participants=[self.speaker('carol',2)])))
+        self.assertEqual(self.scalar("SELECT team_slot FROM public.dk_cross_participants WHERE member_key='bob'"),'1')
+        self.assertEqual(self.scalar("SELECT team_slot FROM public.dk_cross_participants WHERE member_key='carol'"),'2')
+
+    def test_many_motion_edits_require_review_instead_of_creating_a_duplicate(self):
+        motion='This House would prioritise accessible education over competitive examinations for university admissions.'
+        self.simple(entry=self.entry(motion=motion))
+        variant=motion.replace('education','educatoin').replace('competitive','competitve').replace('examinations','examiantions')
+        self.simple(2,self.entry(motion=variant),success=False)
+        self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'1')
+
     def test_bp_three_distinct_accounts_and_local_team_ones_keep_two_speaker_cap(self):
         game=self.simple(1,self.entry(format='BP',participants=[self.speaker('alice'),self.speaker('bob')]))
         self.assertEqual(game,self.simple(3,self.entry(format='BP',participants=[self.speaker('carol'),self.speaker('dave')])))

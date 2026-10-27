@@ -1,6 +1,7 @@
 -- Preserve all existing debates. Only relax optional metadata and replace matching logic.
 ALTER TABLE public.dk_cross_debates DROP CONSTRAINT IF EXISTS dk_cross_debates_opponent_check;
 ALTER TABLE public.dk_cross_debates ADD CONSTRAINT dk_cross_debates_opponent_check CHECK(char_length(opponent) BETWEEN 0 AND 160);
+CREATE INDEX IF NOT EXISTS dk_cross_debates_date_format_idx ON public.dk_cross_debates(debated_on,format);
 
 CREATE OR REPLACE FUNCTION public.dk_cross_match_text(value text) RETURNS text
 LANGUAGE plpgsql IMMUTABLE SET search_path='' AS $$
@@ -10,6 +11,7 @@ BEGIN
  result:=replace(replace(result,'can''t','can not'),'won''t','will not');
  result:=regexp_replace(result,'n''t\M',' not','g');
  result:=public.dk_cross_key(regexp_replace(result,'[^[:alnum:]]+',' ','g'));
+ result:=regexp_replace(result,'\mcannot\M','can not','g');
  result:=regexp_replace(result,'^thw( |$)','this house would ');
  result:=regexp_replace(result,'^thbt( |$)','this house believes that ');
  result:=regexp_replace(result,'^ths( |$)','this house supports ');
@@ -37,7 +39,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION public.dk_cross_motion_match(a text,b text) RETURNS numeric
 LANGUAGE plpgsql IMMUTABLE SET search_path='' AS $$
-DECLARE x text:=public.dk_cross_match_text(a);y text:=public.dk_cross_match_text(b);aa text[];bb text[];ga text[];gb text[];pos integer;score numeric;
+DECLARE x text:=public.dk_cross_match_text(a);y text:=public.dk_cross_match_text(b);aa text[];bb text[];ga text[];gb text[];pos integer;score numeric;changed integer:=0;
 BEGIN
  IF x='' OR y='' THEN RETURN 0; END IF;
  IF x=y THEN RETURN 1; END IF;
@@ -52,12 +54,14 @@ BEGIN
  IF cardinality(aa)<>cardinality(bb) THEN RETURN 0; END IF;
  FOR pos IN 1..cardinality(aa) LOOP
   IF NOT public.dk_cross_word_close(aa[pos],bb[pos]) THEN RETURN 0; END IF;
+  IF aa[pos]<>bb[pos] THEN changed:=changed+1;END IF;
  END LOOP;
  -- Dice similarity, after checking that differences are only spelling-like edits.
  WITH ax AS (SELECT DISTINCT substr('  '||x||' ',i,3) t FROM generate_series(1,length(x)+1) i),
  bx AS (SELECT DISTINCT substr('  '||y||' ',i,3) t FROM generate_series(1,length(y)+1) i)
  SELECT 2.0*(SELECT count(*) FROM ax JOIN bx USING(t))/greatest(1,(SELECT count(*) FROM ax)+(SELECT count(*) FROM bx)) INTO score;
- RETURN score;
+ IF changed>2 THEN RETURN least(0.89,greatest(0.78,score));END IF;
+ RETURN greatest(0.78,score);
 END $$;
 
 CREATE OR REPLACE FUNCTION public.dk_cross_uni_text(value text) RETURNS text
@@ -112,13 +116,14 @@ DECLARE actor text:=public.dk_cross_actor();day date:=(payload->>'debated_on')::
  against text:=btrim(coalesce(payload->>'opponent',''));motion_text text:=btrim(payload->>'motion');
  candidate jsonb:=payload;incoming jsonb:=payload->'participants';game uuid;existing public.dk_cross_debates%ROWTYPE;
  row_data public.dk_cross_debates%ROWTYPE;motion_score numeric;uni_score numeric;near_count integer:=0;sure_count integer:=0;
- team_map jsonb:='{}';unknown_slots integer[]:='{}';used integer[]:='{}';slot integer;mapped integer;known integer;cap integer;
+ team_map jsonb:='{}';unknown_slots integer[]:='{}';used integer[]:='{}';slot integer;mapped integer;known integer;cap integer;group_size integer;speaker_cap integer;
 BEGIN
  IF day IS NULL OR day>(now() AT TIME ZONE 'Asia/Kolkata')::date OR fmt IS NULL OR fmt NOT IN ('AP','BP')
   OR coalesce(length(motion_text),0) NOT BETWEEN 1 AND 2000 OR length(against)>160 THEN
   RAISE EXCEPTION 'Enter a valid date, AP/BP format and motion';END IF;
  IF jsonb_typeof(incoming) IS DISTINCT FROM 'array' OR jsonb_array_length(incoming)<1 THEN RAISE EXCEPTION 'Select at least yourself';END IF;
  cap:=CASE WHEN fmt='AP' THEN 2 ELSE 3 END;
+ speaker_cap:=CASE WHEN fmt='AP' THEN 3 ELSE 2 END;
  -- All modern submissions on a date/format share this lock, including typo variants.
  PERFORM pg_advisory_xact_lock(hashtextextended(jsonb_build_array(day::text,fmt)::text,0));
  FOR row_data IN SELECT * FROM public.dk_cross_debates d WHERE d.debated_on=day AND d.format=fmt LOOP
@@ -155,6 +160,10 @@ BEGIN
  IF (SELECT count(*) FROM jsonb_each(team_map))<>(SELECT count(DISTINCT value) FROM jsonb_each(team_map)) THEN RAISE EXCEPTION 'These groups belong to the same recorded team';END IF;
  FOREACH slot IN ARRAY unknown_slots LOOP
   mapped:=NULL;
+  SELECT count(*) INTO group_size FROM jsonb_array_elements(incoming) p WHERE p->>'role'='Speaker' AND (p->>'team_slot')::integer=slot;
+  IF game IS NOT NULL AND slot=ANY(used) AND EXISTS(SELECT 1 FROM public.dk_cross_participants p
+    WHERE p.debate_id=game AND p.role='Speaker' AND NOT p.withdrawn GROUP BY p.team_slot HAVING count(*)+group_size<=speaker_cap) THEN
+   RAISE EXCEPTION 'Include a recorded teammate to identify an existing team, or use an unused team number for a separate team; no records were changed';END IF;
   IF NOT slot=ANY(used) THEN mapped:=slot;
   ELSE SELECT n INTO mapped FROM generate_series(1,cap) n WHERE NOT n=ANY(used) ORDER BY n LIMIT 1;END IF;
   IF mapped IS NULL THEN RAISE EXCEPTION 'All teams are already recorded. Include an existing teammate to link your entry; no duplicate was created';END IF;
