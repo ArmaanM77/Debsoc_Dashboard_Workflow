@@ -1,0 +1,46 @@
+name: Activate shared cross mocks
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['migrations/20261027_shared_cross_mocks.sql','tests/test_shared_cross_mocks.py','tests/test_cross_roster_sync.py','scripts/sync_cross_roster.py','.github/workflows/shared-cross-mocks.yml']
+permissions:
+  contents: read
+concurrency:
+  group: shared-cross-mocks-${{ github.event_name }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify shared debates, duplicates, caps, privacy and confirmations in isolated PostgreSQL
+        env:
+          RUN_POSTGRES_TESTS: '1'
+        run: python -m unittest discover -s tests -p 'test_shared_cross_mocks.py'
+      - name: Verify roster parsing fails safely on invalid sheets
+        run: python -m unittest discover -s tests -p 'test_cross_roster_sync.py'
+  backup:
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
+    uses: ./.github/workflows/backup-supabase.yml
+    secrets: inherit
+  install:
+    needs: backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install additive shared schema
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: |
+          docker run --rm -v "$PWD:/workspace:ro" postgres:17 psql "$DEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction --file=/workspace/migrations/20261027_shared_cross_mocks.sql
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Sync registered society names
+        env:
+          DEST_DB_URL: ${{ secrets.DEST_DB_URL }}
+        run: python scripts/sync_cross_roster.py
