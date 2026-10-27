@@ -80,12 +80,20 @@ BEGIN
 END $$;
 CREATE OR REPLACE FUNCTION public.dk_cross_uni_key(value text) RETURNS text
 LANGUAGE plpgsql IMMUTABLE SET search_path='' AS $$
-DECLARE words text[]:=string_to_array(public.dk_cross_uni_text(value),' ');result text:='';w text;pos integer:=1;
+DECLARE name text:=public.dk_cross_uni_text(value);
 BEGIN
- IF cardinality(words)=1 THEN RETURN words[1]; END IF;
- IF words[1] IN ('iit','nit','iim') THEN result:=words[1];pos:=2; END IF;
- WHILE pos<=cardinality(words) LOOP w:=words[pos];IF w NOT IN ('of','the','and') THEN result:=result||left(w,1);END IF;pos:=pos+1;END LOOP;
- RETURN result;
+ -- Do not invent initialisms: Delhi/Dharwad and Bombay/BHU must stay distinct.
+ RETURN CASE name
+  WHEN 'iit delhi' THEN 'iitd' WHEN 'iit bombay' THEN 'iitb'
+  WHEN 'iit roorkee' THEN 'iitr' WHEN 'iit kanpur' THEN 'iitk'
+  WHEN 'iit kharagpur' THEN 'iitkgp' WHEN 'iit madras' THEN 'iitm'
+  WHEN 'iit guwahati' THEN 'iitg' WHEN 'iit hyderabad' THEN 'iith'
+  WHEN 'iit bhu' THEN 'iitbhu' WHEN 'iit varanasi' THEN 'iitbhu'
+  WHEN 'iit bhu varanasi' THEN 'iitbhu' WHEN 'iit banaras hindu university' THEN 'iitbhu'
+  WHEN 'iit bhubaneswar' THEN 'iitbbs' WHEN 'iit dharwad' THEN 'iitdh'
+  WHEN 'delhi university' THEN 'du' WHEN 'delhi technological university' THEN 'dtu'
+  WHEN 'jawaharlal nehru university' THEN 'jnu' WHEN 'banaras hindu university' THEN 'bhu'
+  ELSE replace(name,' ','') END;
 END $$;
 CREATE OR REPLACE FUNCTION public.dk_cross_uni_match(a text,b text) RETURNS numeric
 LANGUAGE plpgsql IMMUTABLE SET search_path='' AS $$

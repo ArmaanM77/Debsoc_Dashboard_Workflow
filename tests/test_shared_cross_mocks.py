@@ -108,6 +108,12 @@ class SharedCrossMocksTest(Database):
         self.assertEqual(second,self.simple(2,self.entry(opponent='IIT Bombay')))
         self.assertEqual(self.scalar('SELECT count(*) FROM public.dk_cross_debates'),'2')
 
+    def test_shared_initials_do_not_conflate_distinct_university_campuses(self):
+        for left,right in [('IITB','IIT BHU'),('IITD','IIT Dharwad'),('IIT Bombay','IIT Bhubaneswar'),('Delhi University','Dibrugarh University')]:
+            score=self.scalar("SELECT coalesce(public.dk_cross_uni_match('%s','%s'),0)" % (left,right))
+            self.assertEqual(float(score),0,(left,right,score))
+        self.assertEqual(self.scalar("SELECT public.dk_cross_uni_match('IITBHU','Indian Institute of Technology BHU')"),'1')
+
     def test_partial_groups_without_overlap_are_not_guessed_into_existing_teams(self):
         game=self.simple(entry=self.entry(participants=[self.speaker('alice')]))
         self.simple(2,self.entry(participants=[self.speaker('bob')]),success=False)
