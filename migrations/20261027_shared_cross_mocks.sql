@@ -76,7 +76,7 @@ BEGIN
   IF game IS NULL THEN RAISE EXCEPTION 'The selected debate changed; reopen it before saving'; END IF;
  ELSE
   INSERT INTO public.dk_cross_debates(debated_on,opponent,format,round_label,motion,info_slide,fingerprint,created_by)
-   VALUES(day,against,fmt,room,motion_text,slide,ident) ON CONFLICT(fingerprint) DO NOTHING RETURNING id INTO game;
+   VALUES(day,against,fmt,room,motion_text,slide,ident,auth.uid()) ON CONFLICT(fingerprint) DO NOTHING RETURNING id INTO game;
   IF game IS NULL THEN SELECT id INTO game FROM public.dk_cross_debates WHERE fingerprint=ident; END IF;
  END IF;
  -- Serialize merges: duplicate and simultaneous team submissions cannot inflate counts/caps.
