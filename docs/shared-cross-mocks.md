@@ -6,11 +6,24 @@ Tabbycat debate data, profiles or tournament entries. The retired per-account
 
 ## Record and identity rules
 
-- A debate has a date, AP/BP format, Against, round/room, mandatory motion and optional infoslide.
-- The normalized date/format/Against/round-room/motion identity is unique. Two teammates,
-  two teams or simultaneous submissions merge into one debate with one row per person.
-- Use the existing-debate selector to avoid spelling differences when joining a record.
-  Different rounds/rooms never collapse into the same debate.
+- The current form needs a date, AP/BP format and motion. Against (one or more universities)
+  and infoslide are optional. Historical round/room labels remain stored, but are not requested.
+- `dk_cross_submit_simple` matches within an exact date/format. Motion punctuation, THW/THBT
+  prefixes and minor spelling edits are supported. Changed negations, numbers, stance words
+  and substantive wording are not treated as spelling corrections. Low-confidence or multiple
+  potential matches are rejected for review instead of guessed or saved as another copy.
+- University lists are order-independent and accept common acronyms/long forms (e.g. IITD /
+  Indian Institute of Technology Delhi). Different known opponents keep debates separate.
+  Blank opponents mean unknown, not a different debate; a later submission may fill that blank.
+- The date/format lock serialises even simultaneous spelling variants. Each shared debate has
+  one participant row per registered person. Matching always retains the first motion text.
+- Team identity comes from overlapping members, not an account-local Team 1 label. Disjoint
+  complete teams allocate free slots; reversed team order and repeat submissions reuse old slots.
+  For an ambiguous partial group, include a recorded teammate to identify the existing team,
+  or select an unused team number explicitly for a separate team. Never infer unseen membership.
+- Existing ambiguous legacy records are not retroactively merged or deleted. Repeated real
+  debates with indistinguishable date/format/motion/opponents cannot be distinguished from
+  those fields alone; such historical ambiguity requires administrator review.
 - AP supports two teams of three; BP supports three teams of two. Adjudicators are uncapped.
 - Speakers and adjudicators must be in the registered society roster. No free-text names.
 - Speaker score (60–100, half steps) and adjudicator score (1–10, half steps) are optional.
